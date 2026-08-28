@@ -2,28 +2,23 @@ import numpy as np
 from PIL import Image
 
 from .config import CONFIG
-from .representations import (
-    min_max_normalize
-)
+from .representations import min_max_normalize
 
 
 def resize_feature(feature):
     """
-    Resize a 2D feature map to 224 x 224.
+    Normalize a 2D feature to [0, 1] and resize
+    it to the configured image size.
 
-    The feature is normalized before resizing.
+    Returns:
+        np.ndarray: uint8 grayscale image
     """
 
     feature = min_max_normalize(feature)
 
-    # Convert [0, 1] -> [0, 255]
-    feature_uint8 = (
-        feature * 255
-    ).clip(0, 255).astype(np.uint8)
-
     image = Image.fromarray(
-        feature_uint8,
-        mode="L"
+        feature.astype(np.float32),
+        mode="F"
     )
 
     image = image.resize(
@@ -31,69 +26,42 @@ def resize_feature(feature):
         resample=Image.Resampling.BILINEAR
     )
 
-    return np.asarray(
+    image = np.asarray(
         image,
-        dtype=np.uint8
+        dtype=np.float32
     )
 
+    image = (
+        image * 255.0
+    ).clip(0, 255)
 
-def create_rgb_fusion(
-    mel,
-    stft,
-    cqt
-):
+    return np.rint(image).astype(np.uint8)
+
+
+def create_rgb_fusion(mel, stft, cqt):
     """
-    Create the paper's RGB-like fusion:
+    Create the DSVNet RGB fusion.
+
+    Paper mapping:
 
         R = MEL
         G = STFT
         B = CQT
 
     Each representation is independently
-    normalized to [0, 1] before conversion
-    to 8-bit [0, 255].
+    min-max normalized to [0, 1], resized,
+    and converted to 8-bit [0, 255].
     """
 
-    mel_norm = min_max_normalize(mel)
-    stft_norm = min_max_normalize(stft)
-    cqt_norm = min_max_normalize(cqt)
-
-    # Resize each independently.
-    mel_img = Image.fromarray(
-        (mel_norm * 255).clip(0, 255).astype(np.uint8),
-        mode="L"
-    ).resize(
-        CONFIG.image_size,
-        resample=Image.Resampling.BILINEAR
-    )
-
-    stft_img = Image.fromarray(
-        (stft_norm * 255).clip(0, 255).astype(np.uint8),
-        mode="L"
-    ).resize(
-        CONFIG.image_size,
-        resample=Image.Resampling.BILINEAR
-    )
-
-    cqt_img = Image.fromarray(
-        (cqt_norm * 255).clip(0, 255).astype(np.uint8),
-        mode="L"
-    ).resize(
-        CONFIG.image_size,
-        resample=Image.Resampling.BILINEAR
-    )
-
-    # Stack:
-    #
-    # R = MEL
-    # G = STFT
-    # B = CQT
+    mel_img = resize_feature(mel)
+    stft_img = resize_feature(stft)
+    cqt_img = resize_feature(cqt)
 
     rgb = np.stack(
         [
-            np.asarray(mel_img),
-            np.asarray(stft_img),
-            np.asarray(cqt_img)
+            mel_img,
+            stft_img,
+            cqt_img
         ],
         axis=-1
     )
