@@ -4,70 +4,111 @@ import torch.nn as nn
 
 class ResidualBlock(nn.Module):
     """
-    DSVNet residual block.
+    DSVNet residual block based on Table 3 of the paper.
 
     Main path:
-        Conv 3x3 -> BatchNorm -> ReLU
-        Conv 3x3 -> BatchNorm
+        Conv2D
+        BatchNorm
+        Conv2D
+        BatchNorm
 
-    Shortcut:
-        Conv 1x1 -> BatchNorm
+    Shortcut path:
+        Conv2D 1x1
 
-    Both paths are added before ReLU.
+    Then:
+        Add
+        Dropout
+        MaxPool
+        Dropout
     """
 
-    def __init__(self, in_channels, out_channels, dropout=0.30):
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        dropout=0.30
+    ):
         super().__init__()
 
-        self.main = nn.Sequential(
-            nn.Conv2d(
-                in_channels,
-                out_channels,
-                kernel_size=3,
-                stride=1,
-                padding=1,
-                bias=False
-            ),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
+        # --------------------------------------------------
+        # Main branch
+        # --------------------------------------------------
 
-            nn.Conv2d(
-                out_channels,
-                out_channels,
-                kernel_size=3,
-                stride=1,
-                padding=1,
-                bias=False
-            ),
-            nn.BatchNorm2d(out_channels),
+        self.conv1 = nn.Conv2d(
+            in_channels,
+            out_channels,
+            kernel_size=3,
+            stride=1,
+            padding=1,
+            bias=True
         )
 
-        self.shortcut = nn.Sequential(
-            nn.Conv2d(
-                in_channels,
-                out_channels,
-                kernel_size=1,
-                stride=1,
-                padding=0,
-                bias=False
-            ),
-            nn.BatchNorm2d(out_channels),
+        self.bn1 = nn.BatchNorm2d(
+            out_channels
         )
 
-        self.relu = nn.ReLU(inplace=True)
-        self.dropout = nn.Dropout2d(dropout)
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.conv2 = nn.Conv2d(
+            out_channels,
+            out_channels,
+            kernel_size=3,
+            stride=1,
+            padding=1,
+            bias=True
+        )
+
+        self.bn2 = nn.BatchNorm2d(
+            out_channels
+        )
+
+        # --------------------------------------------------
+        # Shortcut branch
+        # --------------------------------------------------
+
+        self.shortcut = nn.Conv2d(
+            in_channels,
+            out_channels,
+            kernel_size=1,
+            stride=1,
+            padding=0,
+            bias=True
+        )
+
+        # --------------------------------------------------
+        # Post-residual operations
+        # --------------------------------------------------
+
+        self.dropout1 = nn.Dropout(
+            p=dropout
+        )
+
+        self.pool = nn.MaxPool2d(
+            kernel_size=2,
+            stride=2
+        )
+
+        self.dropout2 = nn.Dropout(
+            p=dropout
+        )
 
     def forward(self, x):
+
+        # Main branch
+        out = self.conv1(x)
+        out = self.bn1(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+
+        # Shortcut
         identity = self.shortcut(x)
 
-        out = self.main(x)
-
+        # Residual addition
         out = out + identity
-        out = self.relu(out)
 
-        out = self.dropout(out)
+        # Dropout → Pool → Dropout
+        out = self.dropout1(out)
         out = self.pool(out)
+        out = self.dropout2(out)
 
         return out
 
@@ -76,83 +117,121 @@ class DSVNet(nn.Module):
     """
     DeepSoundVisionNet (DSVNet)
 
-    Input:
-        (batch_size, 3, 224, 224)
+    Paper architecture:
 
-    Output:
-        (batch_size, 10)
+        Input       224 x 224 x 3
+        Conv        64
+        Pool        112 x 112
+
+        Residual    128
+        Pool        56 x 56
+
+        Residual    256
+        Pool        28 x 28
+
+        Residual    512
+        Pool        14 x 14
+
+        Flatten     100352
+        Dense       1024
+        Dropout     0.5
+        Dense       10
     """
 
-    def __init__(self, num_classes=10, dropout=0.30):
+    def __init__(
+        self,
+        num_classes=10,
+        dropout=0.30
+    ):
         super().__init__()
 
-        # Initial convolution
-        self.initial = nn.Sequential(
-            nn.Conv2d(
-                3,
-                64,
-                kernel_size=3,
-                stride=1,
-                padding=1,
-                bias=False
-            ),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            nn.Dropout2d(dropout),
+        # --------------------------------------------------
+        # Initial layer
+        # --------------------------------------------------
+
+        self.initial_conv = nn.Conv2d(
+            3,
+            64,
+            kernel_size=3,
+            stride=1,
+            padding=1,
+            bias=True
         )
 
+        self.initial_bn = nn.BatchNorm2d(
+            64
+        )
+
+        self.initial_pool = nn.MaxPool2d(
+            kernel_size=2,
+            stride=2
+        )
+
+        self.initial_dropout = nn.Dropout(
+            p=dropout
+        )
+
+        # --------------------------------------------------
         # Residual stages
+        # --------------------------------------------------
+
         self.block1 = ResidualBlock(
-            in_channels=64,
-            out_channels=128,
-            dropout=dropout
+            64,
+            128,
+            dropout
         )
 
         self.block2 = ResidualBlock(
-            in_channels=128,
-            out_channels=256,
-            dropout=dropout
+            128,
+            256,
+            dropout
         )
 
         self.block3 = ResidualBlock(
-            in_channels=256,
-            out_channels=512,
-            dropout=dropout
+            256,
+            512,
+            dropout
         )
 
-        # The paper uses:
-        # 224 -> 112 -> 56 -> 28 -> 14
-        #
-        # Therefore after block3:
-        # feature map = 14 x 14 x 512
-        #
-        # Flattened size = 14 * 14 * 512 = 100352
+        # --------------------------------------------------
+        # Classifier
+        # --------------------------------------------------
 
-        self.classifier = nn.Sequential(
-            nn.Flatten(),
+        self.flatten = nn.Flatten()
 
-            nn.Linear(
-                14 * 14 * 512,
-                1024
-            ),
-            nn.ReLU(inplace=True),
+        self.fc1 = nn.Linear(
+            14 * 14 * 512,
+            1024,
+            bias=True
+        )
 
-            nn.Dropout(0.50),
+        self.fc_dropout = nn.Dropout(
+            p=0.50
+        )
 
-            nn.Linear(
-                1024,
-                num_classes
-            )
+        self.fc2 = nn.Linear(
+            1024,
+            num_classes,
+            bias=True
         )
 
     def forward(self, x):
-        x = self.initial(x)
 
+        # Initial block
+        x = self.initial_conv(x)
+        x = self.initial_bn(x)
+        x = self.initial_pool(x)
+        x = self.initial_dropout(x)
+
+        # Residual stages
         x = self.block1(x)
         x = self.block2(x)
         x = self.block3(x)
 
-        x = self.classifier(x)
+        # Classifier
+        x = self.flatten(x)
+        x = self.fc1(x)
+        x = self.fc_dropout(x)
+        x = self.fc2(x)
 
         return x
