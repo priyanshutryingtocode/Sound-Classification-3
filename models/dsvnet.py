@@ -3,92 +3,34 @@ import torch.nn as nn
 
 
 class ResidualBlock(nn.Module):
-    """
-    DSVNet residual block based on Table 3 of the paper.
-
-    Main path:
-        Conv2D
-        BatchNorm
-        Conv2D
-        BatchNorm
-
-    Shortcut path:
-        Conv2D 1x1
-
-    Then:
-        Add
-        Dropout
-        MaxPool
-        Dropout
-    """
-
-    def __init__(
-        self,
-        in_channels,
-        out_channels,
-        dropout=0.30
-    ):
+    def __init__(self, in_channels, out_channels, dropout=0.30):
         super().__init__()
 
-        # --------------------------------------------------
         # Main branch
-        # --------------------------------------------------
-
         self.conv1 = nn.Conv2d(
-            in_channels,
-            out_channels,
-            kernel_size=3,
-            stride=1,
-            padding=1,
+            in_channels, out_channels,
+            kernel_size=3, stride=1, padding=1,
             bias=True
         )
-
-        self.bn1 = nn.BatchNorm2d(
-            out_channels
-        )
+        self.bn1 = nn.BatchNorm2d(out_channels)
 
         self.conv2 = nn.Conv2d(
-            out_channels,
-            out_channels,
-            kernel_size=3,
-            stride=1,
-            padding=1,
+            out_channels, out_channels,
+            kernel_size=3, stride=1, padding=1,
             bias=True
         )
+        self.bn2 = nn.BatchNorm2d(out_channels)
 
-        self.bn2 = nn.BatchNorm2d(
-            out_channels
-        )
-
-        # --------------------------------------------------
         # Shortcut branch
-        # --------------------------------------------------
-
         self.shortcut = nn.Conv2d(
-            in_channels,
-            out_channels,
-            kernel_size=1,
-            stride=1,
-            padding=0,
+            in_channels, out_channels,
+            kernel_size=1, stride=1, padding=0,
             bias=True
         )
 
-        # --------------------------------------------------
-        # Post-residual operations
-        # --------------------------------------------------
-
-        self.dropout1 = nn.Dropout(
-            p=dropout
-        )
-
-        self.pool = nn.MaxPool2d(
-            kernel_size=2,
-            stride=2
-        )
-
-        self.dropout2 = nn.Dropout(
-            p=dropout
-        )
+        self.dropout1 = nn.Dropout(dropout)
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.dropout2 = nn.Dropout(dropout)
 
     def forward(self, x):
 
@@ -99,20 +41,19 @@ class ResidualBlock(nn.Module):
         out = self.conv2(out)
         out = self.bn2(out)
 
-        # Shortcut
+        # Shortcut branch
         identity = self.shortcut(x)
 
         # Residual addition
         out = out + identity
 
-        # Dropout → Pool → Dropout
+        # Regularization and downsampling
         out = self.dropout1(out)
         out = self.pool(out)
         out = self.dropout2(out)
 
         return out
-
-
+    
 class DSVNet(nn.Module):
     """
     DeepSoundVisionNet (DSVNet)

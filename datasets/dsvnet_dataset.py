@@ -8,13 +8,16 @@ from torch.utils.data import Dataset
 
 class DSVNetDataset(Dataset):
     """
-    Dataset for the preprocessed DSVNet RGB images.
+    Dataset for preprocessed DSVNet representations.
 
-    Each sample:
-        PNG -> RGB -> Tensor [3, 224, 224]
+    representation:
+        "rgb"  -> original MEL + STFT + CQT
+        "mel"  -> MEL channel only, replicated to 3 channels
+        "stft" -> STFT channel only, replicated to 3 channels
+        "cqt"  -> CQT channel only, replicated to 3 channels
 
-    The manifest preserves the official UrbanSound8K fold
-    and class assignments.
+    The replication is necessary because the verified DSVNet
+    architecture expects a 3-channel input.
     """
 
     def __init__(
@@ -22,9 +25,24 @@ class DSVNetDataset(Dataset):
         manifest_path,
         folds,
         transform=None,
+        representation="rgb",
     ):
         self.manifest_path = Path(manifest_path)
         self.transform = transform
+        self.representation = representation.lower()
+
+        valid_representations = {
+            "rgb",
+            "mel",
+            "stft",
+            "cqt",
+        }
+
+        if self.representation not in valid_representations:
+            raise ValueError(
+                f"Invalid representation: {representation}. "
+                f"Choose from {valid_representations}"
+            )
 
         if isinstance(folds, int):
             folds = [folds]
@@ -82,8 +100,6 @@ class DSVNetDataset(Dataset):
                 row["processed_path"]
             )
 
-            # Convert relative paths to project-relative
-            # paths if necessary.
             if not path.is_absolute():
                 path = Path.cwd() / path
 
@@ -114,37 +130,67 @@ class DSVNetDataset(Dataset):
         ).convert("RGB")
 
         # --------------------------------------------------
-        # Transform
+        # Select representation
         # --------------------------------------------------
 
-        if self.transform is not None:
+        if self.representation == "rgb":
 
-            image = self.transform(
-                image
+            # Keep original:
+            # R = MEL
+            # G = STFT
+            # B = CQT
+
+            image_array = torch.from_numpy(
+                __import__("numpy").asarray(
+                    image,
+                    dtype=__import__("numpy").float32,
+                )
             )
 
         else:
 
-            # Manual PIL -> Tensor conversion.
-            #
-            # [H, W, C]
-            #      ↓
-            # [C, H, W]
-            #      ↓
-            # float32 [0, 1]
-
             import numpy as np
 
-            image = np.asarray(
+            image_array = np.asarray(
                 image,
-                dtype=np.float32
+                dtype=np.float32,
             )
 
-            image = (
-                torch.from_numpy(image)
-                .permute(2, 0, 1)
-                / 255.0
+            if self.representation == "mel":
+                channel = image_array[:, :, 0]
+
+            elif self.representation == "stft":
+                channel = image_array[:, :, 1]
+
+            elif self.representation == "cqt":
+                channel = image_array[:, :, 2]
+
+            # Replicate the selected representation
+            # into all three channels.
+            image_array = np.stack(
+                [channel, channel, channel],
+                axis=2,
             )
+
+            image_array = torch.from_numpy(
+                image_array
+            )
+
+        # --------------------------------------------------
+        # HWC -> CHW
+        # --------------------------------------------------
+
+        image = (
+            image_array
+            .permute(2, 0, 1)
+            / 255.0
+        )
+
+        image = image.float()
+
+        # --------------------------------------------------
+        # Label
+        # --------------------------------------------------
 
         label = int(
             row["classID"]
